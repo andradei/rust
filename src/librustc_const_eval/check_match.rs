@@ -255,7 +255,7 @@ fn check_for_bindings_named_the_same_as_variants(cx: &MatchCheckCtxt, pat: &Pat)
                                 "pattern binding `{}` is named the same as one \
                                  of the variants of the type `{}`",
                                 ident.node, ty_path);
-                            fileline_help!(err, p.span,
+                            help!(err,
                                 "if you meant to match on a variant, \
                                  consider making the path in the pattern qualified: `{}::{}`",
                                 ty_path, ident.node);
@@ -341,7 +341,15 @@ fn check_arms(cx: &MatchCheckCtxt,
                         },
 
                         hir::MatchSource::Normal => {
-                            span_err!(cx.tcx.sess, pat.span, E0001, "unreachable pattern")
+                            let mut err = struct_span_err!(cx.tcx.sess, pat.span, E0001,
+                                                           "unreachable pattern");
+                            // if we had a catchall pattern, hint at that
+                            for row in &seen.0 {
+                                if pat_is_catchall(&cx.tcx.def_map.borrow(), row[0]) {
+                                    span_note!(err, row[0].span, "this pattern matches any value");
+                                }
+                            }
+                            err.emit();
                         },
 
                         hir::MatchSource::TryDesugar => {
@@ -361,7 +369,18 @@ fn check_arms(cx: &MatchCheckCtxt,
     }
 }
 
-fn raw_pat<'a>(p: &'a Pat) -> &'a Pat {
+/// Checks for common cases of "catchall" patterns that may not be intended as such.
+fn pat_is_catchall(dm: &DefMap, p: &Pat) -> bool {
+    match p.node {
+        PatKind::Ident(_, _, None) => pat_is_binding(dm, p),
+        PatKind::Ident(_, _, Some(ref s)) => pat_is_catchall(dm, &s),
+        PatKind::Ref(ref s, _) => pat_is_catchall(dm, &s),
+        PatKind::Tup(ref v) => v.iter().all(|p| pat_is_catchall(dm, &p)),
+        _ => false
+    }
+}
+
+fn raw_pat(p: &Pat) -> &Pat {
     match p.node {
         PatKind::Ident(_, _, Some(ref s)) => raw_pat(&s),
         _ => p
